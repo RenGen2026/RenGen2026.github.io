@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RenGen — Generating Images with as Many Tokens as the Scene Needs</title>
+<meta name="description" content="RenGen is a latent diffusion model that generates simple scenes from a few tokens and busy scenes from many, saving compute without losing realism.">
+<meta property="og:title" content="RenGen">
+<meta property="og:description" content="Generating images with as many tokens as the scene needs.">
+<meta property="og:image" content="img/hero_grid.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* UIUC: Illini Orange #E84A27, Illini Blue #13294B — light page */
+  --bg: #ffffff;
+  --bg-deep: #ffffff;
+  --surface: #ffffff;
+  --ink: #1a1d21;
+  --muted: #5c636c;
+  --line: #aeb6c2;
+  --cell: #e84a27;
+  --cell-ink: #ffffff;
+  --act: #13294b;
+  --act-ink: #ffffff;
+  --stage: #c8ced8;
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --img: 256px;
+  --max: 1120px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  color-scheme: light;
+}
+/* Force light UIUC look even when OS is dark */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff; --bg-deep: #ffffff; --surface: #ffffff; --ink: #1a1d21;
+    --muted: #5c636c; --line: #aeb6c2; --cell: #e84a27; --cell-ink: #ffffff;
+    --act: #13294b; --act-ink: #ffffff; --stage: #c8ced8; color-scheme: light;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1520; --bg-deep: #0a0e16; --surface: #161d2b; --ink: #e8eef8;
+  --muted: #9aa6bc; --line: #2a3348; --cell: #ff6b4a; --cell-ink: #1a0a06;
+  --act: #7eb6ff; --act-ink: #0a1220; --stage: #1c2436; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1000px 520px at 12% -10%, color-mix(in srgb, var(--cell) 10%, transparent), transparent 55%),
+    radial-gradient(800px 480px at 88% 4%, color-mix(in srgb, var(--ink) 4%, transparent), transparent 50%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+a { color: var(--act); }
+:focus-visible { outline: 2px solid var(--cell); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Nav */
+.nav {
+  position: sticky; top: 0; z-index: 40;
+  backdrop-filter: blur(14px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+.nav-inner {
+  max-width: var(--max); margin: 0 auto;
+  padding: 12px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.nav-brand {
+  font-family: var(--font-display); font-weight: 800; font-size: 1.05rem;
+  color: var(--act); text-decoration: none; letter-spacing: -0.02em;
+}
+.nav-links { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.nav-links a {
+  color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 500;
+}
+.nav-links a:hover { color: var(--ink); }
+
+/* Hero */
+.hero {
+  max-width: var(--max); margin: 0 auto;
+  padding: clamp(20px, 3.5vw, 36px) 20px 0;
+  display: grid; gap: 0;
+}
+.hero-copy {
+  display: grid; gap: 12px; max-width: min(100%, 56rem);
+  margin-inline: auto; justify-items: center; text-align: center;
+}
+.hero h1 {
+  margin: 0;
+  font-family: var(--font-display); font-weight: 800;
+  font-size: clamp(1.45rem, 3vw, 1.9rem);
+  line-height: 1.2; letter-spacing: -0.02em;
+  text-align: center;
+  opacity: 0; transform: translateY(18px);
+  animation: rise 0.9s var(--ease) 0.05s forwards;
+}
+.hero-brand { color: var(--act); }
+.hero-title { color: var(--ink); }
+.hero-lede {
+  margin: 2rem auto 0.55rem; color: var(--muted); font-size: 1.08rem;
+  text-align: center; max-width: 36em;
+  opacity: 0; transform: translateY(18px);
+  animation: rise 0.9s var(--ease) 0.28s forwards;
+}
+.hero-meta {
+  display: grid; gap: 4px;
+  color: var(--muted); font-size: 0.92rem;
+  opacity: 0; transform: translateY(18px);
+  animation: rise 0.9s var(--ease) 0.36s forwards;
+}
+.hero-authors { text-wrap: balance; }
+.hero-authors a {
+  color: inherit; text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  transition: color 0.2s, border-color 0.2s;
+}
+.hero-authors a:hover { color: var(--act); border-bottom-color: var(--act); }
+.hero-affil { color: var(--muted); }
+.ctas {
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  opacity: 0; transform: translateY(18px);
+  animation: rise 0.9s var(--ease) 0.44s forwards;
+}
+.cta {
+  display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; font-weight: 600; font-size: 0.92rem;
+  text-decoration: none; border-radius: 8px; padding: 10px 16px;
+  border: 1px solid transparent; cursor: pointer; transition: transform 0.2s var(--ease), background 0.2s;
+}
+.cta:hover { transform: translateY(-1px); }
+.cta-primary { background: var(--act); color: var(--act-ink); border-color: var(--act); }
+.cta-secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+.cta-secondary:hover { border-color: var(--ink); }
+
+.hero-visual {
+  margin-inline: calc(50% - 50vw); width: 100vw;
+  opacity: 0; transform: translateY(28px);
+  animation: rise 1s var(--ease) 0.5s forwards;
+}
+.hero-stage {
+  position: relative;
+  background: transparent;
+  overflow: hidden;
+  padding-inline: clamp(16px, 5vw, 64px);
+}
+.hero-mosaic {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 0;
+  width: 100%; max-width: 1180px; margin: 0 auto;
+}
+.hero-cell {
+  position: relative; isolation: isolate;
+  aspect-ratio: 1; background: #1a2220; overflow: hidden;
+  margin: 0; padding: 0;
+}
+.hero-cell img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  opacity: 0; transition: opacity 0.85s ease;
+}
+.hero-cell img.is-shown { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-cell img { transition: none; }
+}
+.hero-class {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 1;
+  margin: 0; padding: 14px 12px 36px;
+  font-family: var(--font-mono); font-size: clamp(0.62rem, 1.05vw, 0.78rem);
+  font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
+  text-align: center; color: #f4efe4;
+  background: linear-gradient(180deg, rgba(8, 12, 11, 0.78) 0%, rgba(8, 12, 11, 0.35) 55%, transparent 100%);
+  pointer-events: none;
+}
+.hero-class::after {
+  content: ""; display: block; width: 18px; height: 1px; margin: 8px auto 0;
+  background: var(--cell); opacity: 0.9;
+}
+.hero-bar {
+  width: fit-content; max-width: calc(100% - 40px); margin: 0 auto;
+  padding: 14px 20px 18px;
+  display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 12px 14px;
+  color: var(--muted); font-size: 0.88rem;
+}
+.hero-bar .readout { color: var(--ink); font-size: 0.95rem; flex: none; white-space: nowrap; }
+.hero-bar .readout small { color: var(--muted); font-size: 0.78rem; }
+.hero-bar input[type=range] {
+  flex: none; width: var(--hero-title-w, 28rem);
+  min-width: 160px; max-width: min(42vw, 100%);
+  accent-color: var(--cell); margin: 0;
+}
+.hero-bar .btn {
+  border-color: var(--cell); color: var(--cell);
+}
+.hero-bar .btn[aria-pressed="true"] {
+  background: var(--cell); color: var(--cell-ink); border-color: var(--cell);
+}
+@media (max-width: 720px) {
+  .hero-authors { font-size: 0.82rem; }
+  #demo .section-head { width: auto; max-width: 100%; }
+  #demo .section-head p { white-space: normal; }
+}
+
+@keyframes rise {
+  to { opacity: 1; transform: none; }
+}
+
+/* Sections */
+.section {
+  max-width: var(--max); margin: 0 auto;
+  padding: clamp(48px, 8vw, 80px) 20px 0;
+  text-align: center;
+}
+.section-head {
+  display: grid; gap: 8px; margin: 0 auto 22px; max-width: 40rem;
+  justify-items: center;
+}
+.section-head h2 {
+  font-family: var(--font-display); font-weight: 800; margin: 0;
+  font-size: clamp(1.45rem, 3vw, 1.9rem); letter-spacing: -0.02em; line-height: 1.15;
+}
+.section-head p { margin: 0; color: var(--muted); }
+#demo .section-head {
+  max-width: none;
+  width: fit-content;
+  margin-inline: auto;
+}
+#demo .section-head p { white-space: nowrap; }
+.abstract p {
+  margin: 0 auto; max-width: 48rem; font-size: 1.05rem;
+  text-align: justify; text-wrap: pretty;
+  color: color-mix(in srgb, var(--ink) 88%, var(--muted));
+}
+
+.abstract strong {
+  color: var(--ink); font-weight: 600;
+}
+
+/* Demo — separator lines between demos */
+.demo-wrap { display: grid; gap: 0; }
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.card {
+  background: transparent; border: 0; border-radius: 0;
+  border-top: 1px solid var(--line);
+  padding: 40px 0; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px 22px; align-items: start;
+  width: 100%; max-width: 820px; min-width: 0; margin-inline: auto; text-align: left;
+}
+.card:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.card-side {
+  display: grid; gap: 12px; align-content: start; justify-items: start; min-width: 0;
+}
+.card-display {
+  display: grid; gap: 10px; justify-items: center; align-content: start;
+}
+.card .head { display: grid; gap: 4px; text-align: left; justify-items: start; }
+.card h3 { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; margin: 0; line-height: 1.2; }
+.card .head p { color: var(--muted); font-size: 0.92rem; margin: 0; max-width: 36em; }
+.tabs {
+  justify-self: stretch; display: flex; flex-wrap: wrap; gap: 8px;
+  border: 0; padding: 0;
+}
+.tabs button {
+  font: inherit; font-size: 0.78rem; font-weight: 500; white-space: nowrap;
+  background: color-mix(in srgb, var(--bg) 70%, var(--surface));
+  color: var(--muted); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 11px; cursor: pointer; flex: 0 0 auto;
+  letter-spacing: 0.01em;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, transform 0.18s var(--ease);
+}
+.tabs button:hover {
+  color: var(--ink); border-color: color-mix(in srgb, var(--cell) 45%, var(--line));
+  transform: translateY(-1px);
+}
+.tabs button[aria-selected="true"] {
+  color: var(--cell-ink);
+  background: var(--cell);
+  border-color: var(--cell);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--cell) 35%, transparent);
+}
+.tabs button[aria-selected="true"]:hover { color: var(--cell-ink); }
+.stage {
+  position: relative; width: var(--img); max-width: 100%; aspect-ratio: 1;
+  border-radius: 8px; background-color: var(--stage); background-repeat: no-repeat; overflow: hidden;
+}
+.frame { position: absolute; inset: 0; background-repeat: no-repeat; }
+.controls { display: flex; align-items: center; gap: 8px 12px; width: 100%; max-width: 22rem; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .card {
+    grid-template-columns: 1fr;
+    justify-items: center; text-align: center;
+  }
+  .card-side, .card .head { justify-items: center; text-align: center; }
+  .tabs { justify-content: center; }
+  .controls { justify-content: center; max-width: var(--img); }
+}
+.readout { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+.readout small { color: var(--muted); font-size: 0.75rem; }
+input[type=range] { flex: 1 1 120px; accent-color: var(--act); min-width: 0; }
+.btn {
+  font: inherit; font-size: 0.78rem; font-weight: 500; border: 1px solid var(--act);
+  background: transparent; color: var(--act); border-radius: 7px; padding: 3px 10px; cursor: pointer;
+}
+.btn[aria-pressed="true"] { background: var(--act); color: var(--act-ink); }
+.tag {
+  position: absolute; left: 6px; top: 6px; font-size: 0.7rem; font-weight: 500;
+  background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--ink);
+  padding: 2px 7px; border-radius: 5px;
+}
+.tag.r { left: auto; right: 6px; }
+.badge {
+  position: absolute; right: 6px; bottom: 6px; font-family: var(--font-mono); font-size: 0.72rem;
+  background: var(--cell); color: var(--cell-ink); padding: 2px 7px; border-radius: 5px;
+}
+.minis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: var(--img); max-width: 100%; }
+.mini { position: relative; aspect-ratio: 1; border-radius: 6px; background-color: var(--stage); background-repeat: no-repeat; }
+.thumb { width: 56px; aspect-ratio: 1; border-radius: 5px; background-color: var(--stage); background-size: 100% 100%; flex: none; }
+.pad { display: grid; grid-template-columns: repeat(3, 32px); grid-template-rows: repeat(3, 32px); gap: 3px; flex: none; }
+.pad button {
+  font: inherit; font-size: 0.95rem; line-height: 1; padding: 0; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); border-radius: 7px; cursor: pointer; display: grid; place-items: center;
+}
+.pad button:hover { border-color: var(--act); color: var(--act); }
+.pad .c { color: var(--muted); }
+.compare .after { clip-path: inset(0 0 0 var(--cut, 50%)); }
+.compare .divider {
+  position: absolute; top: 0; bottom: 0; left: var(--cut, 50%); width: 2px; margin-left: -1px;
+  background: var(--cell); pointer-events: none;
+}
+.compare .divider::after {
+  content: "⇆"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 24px; height: 24px; border-radius: 50%; background: var(--cell); color: var(--cell-ink);
+  display: grid; place-items: center; font-size: 0.78rem;
+}
+.compare input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; }
+.seg {
+  display: inline-flex; gap: 3px; padding: 4px;
+  background: color-mix(in srgb, var(--bg) 80%, var(--surface));
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.seg button {
+  font: inherit; font-size: 0.78rem; font-weight: 500;
+  border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+  padding: 6px 12px; cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+.seg button:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.seg button[aria-pressed="true"] {
+  color: var(--act-ink); background: var(--act);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--act) 35%, transparent);
+}
+
+/* Cite */
+#cite { text-align: left; }
+#cite .section-head {
+  margin-inline: auto; text-align: center; justify-items: center;
+}
+.cite-box {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px 18px; position: relative;
+  max-width: 820px; margin-inline: auto; text-align: left;
+}
+.cite-box pre {
+  margin: 0; overflow-x: auto; font-family: var(--font-mono); font-size: 0.78rem;
+  line-height: 1.55; white-space: pre; color: var(--ink); text-align: left;
+}
+.copy-btn {
+  position: absolute; top: 12px; right: 12px;
+  font: inherit; font-size: 0.78rem; font-weight: 500;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 7px; padding: 4px 10px; cursor: pointer;
+}
+.copy-btn:hover { border-color: var(--act); color: var(--act); }
+
+/* Footer spacer */
+footer {
+  max-width: var(--max); margin: 0 auto;
+  padding: 48px 20px 36px;
+}
+
+.reveal {
+  opacity: 0; transform: translateY(18px);
+  transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+}
+.reveal.in { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  }
+  .hero h1, .hero-lede, .hero-meta, .ctas, .hero-visual, .reveal {
+    opacity: 1 !important; transform: none !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Primary">
+  <div class="nav-inner">
+    <a class="nav-brand" href="#">RenGen</a>
+    <div class="nav-links">
+      <a href="#abstract">Abstract</a>
+      <a href="#demo">Demo</a>
+      <a href="paper.pdf">Paper</a>
+      <a href="#cite">Cite</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-copy">
+    <h1>
+      <span class="hero-brand">RenGen:</span>
+      <span class="hero-title"> Generating images with as many tokens<br>as the scene needs</span>
+    </h1>
+    <div class="hero-meta">
+      <div class="hero-authors">
+        <a href="https://savya08.github.io/" target="_blank" rel="noopener">Savya Khosla</a> ·
+        <a href="https://jmahajan117.github.io/" target="_blank" rel="noopener">Jay Mahajan</a> ·
+        <a href="https://www.linkedin.com/in/akinsakalli/" target="_blank" rel="noopener">Akin Tuna Sakalli</a> ·
+        <a href="https://dhoiem.cs.illinois.edu/" target="_blank" rel="noopener">Derek Hoiem</a> ·
+        <a href="http://luthuli.cs.uiuc.edu/~daf/" target="_blank" rel="noopener">David Forsyth</a> ·
+        <a href="https://www.alexander-schwing.de/" target="_blank" rel="noopener">Alex Schwing</a>
+      </div>
+      <div class="hero-affil">University of Illinois Urbana-Champaign</div>
+    </div>
+    <div class="ctas">
+      <a class="cta cta-primary" href="paper.pdf">Paper</a>
+      <a class="cta cta-secondary" href="#demo">Demos</a>
+      <a class="cta cta-secondary" href="#cite">Cite</a>
+    </div>
+  </div>
+
+  <p class="hero-lede">Fewer tokens → simpler scenes, lower cost</p>
+
+  <div class="hero-visual" aria-label="Generated ImageNet samples at varying token counts">
+    <div class="hero-stage">
+      <div class="hero-mosaic" id="heroMosaic"></div>
+      <div class="hero-bar">
+        <span class="readout mono" id="heroRead"></span>
+        <input type="range" id="heroRange" min="0" max="4" step="1" value="2" aria-label="Token count">
+        <button class="btn" id="heroPlay" aria-pressed="true">Pause</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="section abstract reveal" id="abstract">
+  <div class="section-head">
+    <h2>Abstract</h2>
+  </div>
+  <p>
+    We present RenGen, a latent diffusion model that generates simple scenes from a few tokens and busy scenes from many,
+    saving time and compute on simple scenes without losing realism. Most latent generators represent every image as a fixed
+    grid of patch tokens, so a simple image costs as much to generate as a complex one. Prior methods that vary the token count
+    through content-adaptive tokenization lose image quality as the count shrinks. RenGen instead trades scene complexity,
+    rather than image quality, for fewer tokens. It does so by generating in the latent space of a pretrained region encoder,
+    where each token represents one region of the image, and a decoder renders these region tokens back into pixels. Unlike
+    patch tokens, region tokens cover areas of varying shape and position, so each token must capture both what its region
+    contains and where it lies on the image canvas. We encode this spatial extent by adding positional embeddings to the
+    encoder features before pooling, and we generate it by anchoring each token to a single randomly sampled point, from which
+    the generator infers the region’s shape, size, and content. At sampling time, the number of anchor points sets the
+    trade-off between scene complexity and compute. On ImageNet 256×256, RenGen reaches a <strong>gFID of 1.34</strong> with
+    <strong>88 tokens per image</strong> on average, the best among methods that vary their token count. It approaches the
+    quality of RAEv2, a state-of-the-art patch-based model, at <strong>2.5× lower latency</strong>, advancing the Pareto
+    frontier of generation quality versus compute. RenGen’s <strong>gFID stays flat across scene complexity</strong> while
+    latency varies by <strong>2.4× between simplest and busiest scenes</strong>, and its autoencoder reconstructs nearly as
+    well as RAEv2 (<strong>rFID 0.32 vs. 0.30</strong>) with <strong>2.9× fewer tokens</strong>.
+  </p>
+</section>
+
+<section class="section reveal" id="demo">
+  <div class="section-head">
+    <h2>Interactive demos</h2>
+  </div>
+  <div class="demo-wrap">
+    <main class="grid">
+      <section class="card" id="grow" aria-labelledby="grow-h">
+        <div class="card-side">
+          <div class="head"><h3 id="grow-h">Detail on demand</h3><p>Add tokens to a simple image and re-denoise: the scene stays, detail appears.</p></div>
+          <div class="tabs" role="tablist" aria-label="Detail on demand examples" id="growTabs"></div>
+          <div class="controls"><span class="readout" id="growRead"></span><input type="range" id="growRange" min="0" max="8" step="1" value="0" aria-label="Number of tokens"><button class="btn" id="growPlay" aria-pressed="false">Play</button></div>
+        </div>
+        <div class="card-display">
+          <div class="stage" id="growStage" role="img" aria-label=""><span class="badge" id="growBadge"></span></div>
+        </div>
+      </section>
+
+      <section class="card" id="move" aria-labelledby="move-h">
+        <div class="card-side">
+          <div class="head"><h3 id="move-h">Move</h3><p>Shift every anchor point and re-denoise 10 steps. The model fills what comes into view.</p></div>
+          <div class="tabs" role="tablist" aria-label="Move examples" id="moveTabs"></div>
+          <div class="controls">
+            <div class="pad" id="pad">
+              <span></span><button data-d="up" aria-label="Move up">↑</button><span></span>
+              <button data-d="left" aria-label="Move left">←</button><button data-d="reset" class="c" aria-label="Reset to original" title="Reset">↺</button><button data-d="right" aria-label="Move right">→</button>
+              <span></span><button data-d="down" aria-label="Move down">↓</button><span></span>
+            </div>
+            <span class="readout" id="moveRead"></span>
+          </div>
+        </div>
+        <div class="card-display">
+          <div class="stage" id="moveStage" role="img" aria-label=""></div>
+        </div>
+      </section>
+
+      <section class="card" id="transplant" aria-labelledby="swap-h">
+        <div class="card-side">
+          <div class="head"><h3 id="swap-h">Transplant</h3><p>Replace only the tokens inside the outlined region with another photo's object.</p></div>
+          <div class="tabs" role="tablist" aria-label="Transplant examples" id="swapTabs"></div>
+        </div>
+        <div class="card-display">
+          <div class="stage compare" id="swapStage">
+            <div class="frame before"></div><div class="frame after"></div>
+            <span class="tag">original</span><span class="tag r">transplanted</span>
+            <div class="divider"></div>
+            <input type="range" id="swapRange" min="0" max="100" value="50" aria-label="Drag to compare original and transplanted image">
+          </div>
+          <div class="minis"><div class="mini" id="swapFrom"><span class="tag">from</span></div><div class="mini" id="swapTo"><span class="tag">to</span></div></div>
+        </div>
+      </section>
+
+      <section class="card" id="blend" aria-labelledby="blend-h">
+        <div class="card-side">
+          <div class="head"><h3 id="blend-h">Blend</h3><p>Mix corresponding tokens inside the object: halfway is one hybrid object, not a double exposure.</p></div>
+          <div class="tabs" role="tablist" aria-label="Blend examples" id="blendTabs"></div>
+          <div class="controls"><span class="readout" id="blendRead"></span><input type="range" id="blendRange" min="0" max="12" step="1" value="6" aria-label="Blend amount alpha"><button class="btn" id="blendPlay" aria-pressed="false">Play</button></div>
+        </div>
+        <div class="card-display">
+          <div class="stage" id="blendStage" role="img" aria-label=""></div>
+        </div>
+      </section>
+
+      <section class="card" id="inpaint" aria-labelledby="inp-h">
+        <div class="card-side">
+          <div class="head"><h3 id="inp-h">Inpaint</h3><p>Regenerate some region tokens under a new class. The object fits the scene's light and perspective.</p></div>
+          <div class="tabs" role="tablist" aria-label="Inpaint examples" id="inpTabs"></div>
+          <div class="controls"><div class="seg" id="inpSeg" role="group" aria-label="View"><button data-i="0" aria-pressed="false">Original</button><button data-i="1" aria-pressed="false">Masked</button><button data-i="2" aria-pressed="true">Inpainted</button></div></div>
+        </div>
+        <div class="card-display">
+          <div class="stage" id="inpStage" role="img" aria-label=""></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</section>
+
+<section class="section reveal" id="cite">
+  <div class="section-head">
+    <h2>Citation</h2>
+  </div>
+  <div class="cite-box">
+    <button class="copy-btn" type="button" id="copyCite">Copy</button>
+    <pre id="bibtex">@article{khosla2026rengen,
+  title={RenGen: Generating Images with as Many Tokens as the Scene Needs},
+  author={Khosla, Savya and Mahajan, Jay and Sakalli, Akin Tuna and Hoiem, Derek and Forsyth, David and Schwing, Alex},
+  year={2026}
+}</pre>
+  </div>
+</section>
+
+<footer>
+</footer>
+
+<script>
+const TOKENS = [128, 102, 77, 51, 25];
+const CLASSES = ['Balloon', 'Castle', 'Lighthouse', 'Seashore', 'Bald eagle'];
+
+(function hero() {
+  const mosaic = document.getElementById('heroMosaic');
+  const rg = document.getElementById('heroRange');
+  const rd = document.getElementById('heroRead');
+  const btn = document.getElementById('heroPlay');
+  const bar = document.querySelector('.hero-bar');
+  const titleEl = document.querySelector('.hero h1');
+  const syncSliderWidth = () => {
+    if (!titleEl || !bar) return;
+    bar.style.setProperty('--hero-title-w', `${Math.ceil(titleEl.getBoundingClientRect().width)}px`);
+  };
+  syncSliderWidth();
+  addEventListener('resize', syncSliderWidth);
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cells = CLASSES.map((name) => {
+    const cell = document.createElement('figure');
+    cell.className = 'hero-cell';
+    const label = document.createElement('figcaption');
+    label.className = 'hero-class';
+    label.textContent = name;
+    const a = document.createElement('img');
+    const b = document.createElement('img');
+    [a, b].forEach((im) => { im.alt = name; im.width = 256; im.height = 256; im.decoding = 'async'; });
+    a.classList.add('is-shown');
+    cell.append(label, a, b);
+    mosaic.appendChild(cell);
+    return { a, b, front: a, back: b };
+  });
+  // Preload all frames so crossfades stay smooth
+  CLASSES.forEach((_, r) => TOKENS.forEach((_, c) => { const im = new Image(); im.src = `img/complexity_r${r}c${c}.jpg`; }));
+
+  let shown = -1;
+  function render() {
+    const c = +rg.value;
+    if (c === shown) return;
+    cells.forEach((cell, r) => {
+      const src = `img/complexity_r${r}c${c}.jpg`;
+      const alt = `${CLASSES[r]}, ${TOKENS[c]} tokens`;
+      if (shown < 0 || reduceMotion) {
+        cell.front.src = src; cell.front.alt = alt;
+        cell.front.classList.add('is-shown');
+        cell.back.classList.remove('is-shown');
+      } else {
+        cell.back.src = src; cell.back.alt = alt;
+        // Force reflow so opacity transition runs after src swap
+        void cell.back.offsetWidth;
+        cell.back.classList.add('is-shown');
+        cell.front.classList.remove('is-shown');
+        const tmp = cell.front; cell.front = cell.back; cell.back = tmp;
+      }
+    });
+    shown = c;
+    rd.innerHTML = `${TOKENS[c]} <small>tokens</small>`;
+  }
+  let timer = null;
+  const stop = () => { clearInterval(timer); timer = null; btn.setAttribute('aria-pressed', 'false'); btn.textContent = 'Play'; };
+  const start = () => {
+    btn.setAttribute('aria-pressed', 'true'); btn.textContent = 'Pause';
+    timer = setInterval(() => { rg.value = (+rg.value + 1) % 5; render(); }, 2400);
+  };
+  btn.addEventListener('click', () => { if (timer) stop(); else start(); });
+  rg.addEventListener('input', () => { if (timer) stop(); render(); });
+  render();
+  if (!reduceMotion) start();
+})();
+
+document.getElementById('copyCite').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  try {
+    await navigator.clipboard.writeText(document.getElementById('bibtex').textContent);
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
+  } catch {
+    btn.textContent = 'Select & copy';
+  }
+});
+
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(en => { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ——— Demo (from prior interactive page) ——— */
+const DATA = {"grow":[{"label":"Blue jay","src":"img/grow_jay7.jpg","n":9,"k":[48,56,64,76,88,100,116,132,148],"speedup":[4.3,3.8,3.4,3.0,2.6,2.4,2.1,1.8,1.7]},{"label":"Ladybug","src":"img/grow_ladybug25.jpg","n":9,"k":[32,40,48,56,64,80,96,112,128],"speedup":[5.8,5.0,4.3,3.8,3.4,2.9,2.4,2.1,1.9]},{"label":"Monarch","src":"img/grow_monarch15.jpg","n":9,"k":[48,56,64,76,88,100,116,132,148],"speedup":[4.3,3.8,3.4,3.0,2.6,2.4,2.1,1.8,1.7]},{"label":"Pizza","src":"img/grow_pizza9.jpg","n":9,"k":[32,40,48,56,64,80,96,112,128],"speedup":[5.8,5.0,4.3,3.8,3.4,2.9,2.4,2.1,1.9]},{"label":"Church","src":"img/grow_church4.jpg","n":9,"k":[64,72,80,88,96,108,120,134,148],"speedup":[3.4,3.1,2.9,2.6,2.4,2.2,2.0,1.8,1.7]},{"label":"Boathouse","src":"img/grow_boathouse27.jpg","n":9,"k":[32,40,48,56,64,80,96,112,128],"speedup":[5.8,5.0,4.3,3.8,3.4,2.9,2.4,2.1,1.9]},{"label":"Peacock","src":"img/grow_peacock5.jpg","n":9,"k":[48,56,64,76,88,100,116,132,148],"speedup":[4.3,3.8,3.4,3.0,2.6,2.4,2.1,1.8,1.7]}],"move":[{"label":"Goldfinch","src":"img/move_goldfinch.jpg","n":18},{"label":"Lighthouse","src":"img/move_beacon.jpg","n":18},{"label":"Ladybug","src":"img/move_ladybug.jpg","n":18},{"label":"Strawberry","src":"img/move_strawberry.jpg","n":18},{"label":"Robin","src":"img/move_robin.jpg","n":18},{"label":"Daisy","src":"img/move_daisy.jpg","n":18}],"transplant":[{"from":"Bell pepper","to":"Pomegranate","src":"img/swap_bell_pepper16_to_pomegranate31.jpg","n":4,"tokens":32},{"from":"Robin","to":"Goldfinch","src":"img/swap_robin3_to_goldfinch0.jpg","n":4,"tokens":33},{"from":"Cauliflower","to":"Cabbage","src":"img/swap_cauliflower19_to_head_cabbage43.jpg","n":4,"tokens":18},{"from":"Apple","to":"Orange","src":"img/swap_Granny_Smith43_to_orange17.jpg","n":4,"tokens":10},{"from":"Soccer ball","to":"Tennis ball","src":"img/swap_soccer_ball11_to_tennis_ball38.jpg","n":4,"tokens":40},{"from":"Pomegranate","to":"Lemon","src":"img/swap_pomegranate28_to_lemon24.jpg","n":4,"tokens":31},{"from":"Delft teapot","to":"White teapot","src":"img/swap_teapot22_to_teapot31.jpg","n":4,"tokens":56},{"from":"Flower mug","to":"Owl mug","src":"img/swap_cup49_to_coffee_mug7.jpg","n":4,"tokens":45},{"from":"Floral vase","to":"Brown jug","src":"img/swap_vase47_to_pitcher38.jpg","n":4,"tokens":27}],"blend":[{"from":"Goldfinch","to":"Robin","src":"img/blend_robin3_to_goldfinch0.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_robin3_to_goldfinch0.jpg"},{"from":"Lemon","to":"Pomegranate","src":"img/blend_pomegranate28_to_lemon24.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_pomegranate28_to_lemon24.jpg"},{"from":"Tennis ball","to":"Soccer ball","src":"img/blend_soccer_ball11_to_tennis_ball38.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_soccer_ball11_to_tennis_ball38.jpg"},{"from":"Owl mug","to":"Flower mug","src":"img/blend_cup49_to_coffee_mug7.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_cup49_to_coffee_mug7.jpg"},{"from":"Cabbage","to":"Cauliflower","src":"img/blend_cauliflower19_to_head_cabbage43.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_cauliflower19_to_head_cabbage43.jpg"},{"from":"London cab","to":"Minivan","src":"img/blend_minivan21_to_cab38.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_minivan21_to_cab38.jpg"},{"from":"Pomegranate","to":"Bell pepper","src":"img/blend_bell_pepper16_to_pomegranate31.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_bell_pepper16_to_pomegranate31.jpg"},{"from":"Orange","to":"Apple","src":"img/blend_Granny_Smith43_to_orange17.jpg","n":13,"alpha":[0.0,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,1.0],"source":"img/blendsrc_Granny_Smith43_to_orange17.jpg"}],"inpaint":[{"from":"Hills","to":"Castle","src":"img/inpaint_val11119.jpg","n":3},{"from":"Freight car","to":"Garbage truck","src":"img/inpaint_val20234.jpg","n":3},{"from":"Weasel","to":"Birdhouse","src":"img/inpaint_val48572.jpg","n":3},{"from":"Brambling","to":"Fox squirrel","src":"img/inpaint_val10999.jpg","n":3},{"from":"Snail","to":"Ladybug","src":"img/inpaint_val40849.jpg","n":3},{"from":"Kite","to":"Bald eagle","src":"img/inpaint_val26267.jpg","n":3},{"from":"Starfish","to":"Basketball","src":"img/inpaint_val42374.jpg","n":3},{"from":"Park bench","to":"Cauldron","src":"img/inpaint_val33253.jpg","n":3},{"from":"Sky","to":"Volcano","src":"img/inpaint_val157.jpg","n":3}]};
+
+function setFrame(el, src, n, i) {
+  el.style.backgroundImage = `url("${src}")`;
+  el.style.backgroundSize = `${n * 100}% 100%`;
+  el.style.backgroundPosition = `${n > 1 ? (i / (n - 1)) * 100 : 0}% 0`;
+}
+function preload(list) { list.forEach(s => { const im = new Image(); im.src = s; }); }
+function tabs(host, items, label, onPick) {
+  const btns = items.map((it, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.role = 'tab'; b.textContent = label(it);
+    b.setAttribute('aria-selected', i === 0 ? 'true' : 'false'); b.tabIndex = i === 0 ? 0 : -1;
+    b.addEventListener('click', () => { btns.forEach(x => { x.setAttribute('aria-selected', 'false'); x.tabIndex = -1; });
+      b.setAttribute('aria-selected', 'true'); b.tabIndex = 0;
+      b.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
+      onPick(i); });
+    host.appendChild(b); return b;
+  });
+  host.addEventListener('keydown', e => {
+    const i = btns.indexOf(document.activeElement); if (i < 0) return;
+    const j = e.key === 'ArrowRight' ? (i + 1) % btns.length : e.key === 'ArrowLeft' ? (i - 1 + btns.length) % btns.length : -1;
+    if (j >= 0) { e.preventDefault(); btns[j].focus(); btns[j].click(); }
+  });
+}
+function player(btn, step, ms) {
+  let timer = null;
+  const stop = () => { clearInterval(timer); timer = null; btn.setAttribute('aria-pressed', 'false'); btn.textContent = 'Play'; };
+  btn.addEventListener('click', () => { if (timer) return stop();
+    btn.setAttribute('aria-pressed', 'true'); btn.textContent = 'Pause'; timer = setInterval(step, ms); });
+  return stop;
+}
+function bounce(rg, render) {
+  let dir = 1;
+  return () => { let v = +rg.value + dir; if (v > +rg.max || v < 0) { dir = -dir; v = +rg.value + dir; } rg.value = v; render(); };
+}
+
+(function grow() {
+  const st = document.getElementById('growStage'), rg = document.getElementById('growRange');
+  const rd = document.getElementById('growRead'), badge = document.getElementById('growBadge');
+  let cur = DATA.grow[0];
+  function render() { const i = +rg.value; setFrame(st, cur.src, cur.n, i);
+    rd.innerHTML = `${cur.k[i]} <small>tokens</small>`;
+    badge.textContent = `${cur.speedup[i].toFixed(1)}× fewer FLOPs than patches`;
+    st.setAttribute('aria-label', `${cur.label} with ${cur.k[i]} tokens`); }
+  function load(j) { cur = DATA.grow[j]; rg.max = cur.n - 1; rg.value = 0; render(); }
+  preload(DATA.grow.map(g => g.src));
+  const stop = player(document.getElementById('growPlay'), bounce(rg, render), 450);
+  tabs(document.getElementById('growTabs'), DATA.grow, g => g.label, j => { stop(); load(j); });
+  rg.addEventListener('input', render); load(0);
+})();
+
+(function move() {
+  const st = document.getElementById('moveStage'), rd = document.getElementById('moveRead'), card = document.getElementById('move');
+  let cur = DATA.move[0], axis = 'h', k = 0;
+  const index = () => axis === 'h' ? 4 + k : 13 + k;
+  function render() {
+    setFrame(st, cur.src, cur.n, index());
+    const name = axis === 'h' ? (k < 0 ? 'left' : 'right') : (k < 0 ? 'up' : 'down');
+    rd.innerHTML = k === 0 ? 'original' : `${name} <small>${Math.abs(k) * 5}% of width</small>`;
+    st.setAttribute('aria-label', `${cur.label}, ${k === 0 ? 'original' : `shifted ${name}`}`);
+  }
+  function go(d) {
+    if (d === 'reset') { k = 0; return render(); }
+    const ax = d === 'left' || d === 'right' ? 'h' : 'v', s = d === 'left' || d === 'up' ? -1 : 1;
+    if (ax !== axis) { axis = ax; k = 0; }
+    k = Math.max(-4, Math.min(4, k + s)); render();
+  }
+  document.getElementById('pad').addEventListener('click', e => { const d = e.target.closest('button')?.dataset.d; if (d) go(d); });
+  card.addEventListener('keydown', e => {
+    if (e.target.closest('.tabs')) return;
+    const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+    if (map[e.key]) { e.preventDefault(); go(map[e.key]); }
+  });
+  preload(DATA.move.map(m => m.src));
+  tabs(document.getElementById('moveTabs'), DATA.move, m => m.label, j => { cur = DATA.move[j]; k = 0; render(); });
+  render();
+})();
+
+(function transplant() {
+  const st = document.getElementById('swapStage'), rg = document.getElementById('swapRange');
+  const before = st.querySelector('.before'), after = st.querySelector('.after');
+  const from = document.getElementById('swapFrom'), to = document.getElementById('swapTo');
+  function load(j) { const s = DATA.transplant[j];
+    setFrame(before, s.src, 4, 2); setFrame(after, s.src, 4, 3); setFrame(from, s.src, 4, 0); setFrame(to, s.src, 4, 1); }
+  rg.addEventListener('input', () => st.style.setProperty('--cut', rg.value + '%'));
+  preload(DATA.transplant.map(t => t.src));
+  tabs(document.getElementById('swapTabs'), DATA.transplant, t => `${t.from} → ${t.to}`, load);
+  load(0);
+})();
+
+(function blend() {
+  const st = document.getElementById('blendStage'), rg = document.getElementById('blendRange');
+  const rd = document.getElementById('blendRead');
+  let cur = DATA.blend[0];
+  function render() { const i = +rg.value; setFrame(st, cur.src, cur.n, i);
+    rd.innerHTML = `α ${cur.alpha[i].toFixed(2)}`;
+    st.setAttribute('aria-label', `${cur.from} blended toward ${cur.to}, alpha ${cur.alpha[i].toFixed(2)}`); }
+  function load(j) { cur = DATA.blend[j]; rg.max = cur.n - 1; render(); }
+  preload(DATA.blend.map(b => b.src));
+  player(document.getElementById('blendPlay'), bounce(rg, render), 260);
+  tabs(document.getElementById('blendTabs'), DATA.blend, b => `${b.from} → ${b.to}`, load);
+  rg.addEventListener('input', render); load(0);
+})();
+
+(function inpaint() {
+  const st = document.getElementById('inpStage'), seg = document.getElementById('inpSeg');
+  let cur = DATA.inpaint[0], view = 2;
+  const names = ['original', 'masked', 'inpainted'];
+  function render() { setFrame(st, cur.src, 3, view);
+    seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === view)));
+    st.setAttribute('aria-label', `${names[view]}: ${cur.from} replaced by ${cur.to}`); }
+  seg.addEventListener('click', e => { const b = e.target.closest('button'); if (b) { view = +b.dataset.i; render(); } });
+  preload(DATA.inpaint.map(t => t.src));
+  tabs(document.getElementById('inpTabs'), DATA.inpaint, t => `${t.from} → ${t.to}`, j => { cur = DATA.inpaint[j]; view = 2; render(); });
+  render();
+})();
+</script>
+</body>
+</html>
